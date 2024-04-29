@@ -1,11 +1,11 @@
 [package]
-name = "raindesk"
+name = "rustdesk"
 version = "1.2.4"
-authors = ["raindesk <lm@rainss.cn>"]
+authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
 build= "build.rs"
 description = "RainDesk Remote Desktop"
-default-run = "raindesk"
+default-run = "rustdesk"
 rust-version = "1.75"
 
 [lib]
