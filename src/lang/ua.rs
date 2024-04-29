@@ -44,6 +44,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("id_change_tip", "Допускаються лише символи a-z, A-Z, 0-9 і _ (підкреслення). Першою повинна бути літера a-z, A-Z. В межах від 6 до 16 символів"),
         ("Website", "Веб-сайт"),
         ("About", "Про RustDesk"),
+        ("Rains", ""),
         ("Slogan_tip", "Створено з душею в цьому хаотичному світі!"),
         ("Privacy Statement", "Декларація про конфіденційність"),
         ("Mute", "Вимкнути звук"),

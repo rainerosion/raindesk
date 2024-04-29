@@ -44,6 +44,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("id_change_tip", "Yalnızca a-z, A-Z, 0-9 ve _ (alt çizgi) karakterlerini kullanabilirsiniz. İlk karakter a-z veya A-Z olmalıdır. Uzunluk 6 ile 16 karakter arasında olmalıdır."),
         ("Website", "Website"),
         ("About", "Hakkında"),
+        ("Rains", ""),
         ("Slogan_tip", ""),
         ("Privacy Statement", ""),
         ("Mute", "Sustur"),

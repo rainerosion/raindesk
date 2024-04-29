@@ -44,6 +44,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("id_change_tip", "Només pots utilitzar caràcters a-z, A-Z, 0-9 e _ (guionet baix). El primer caràcter ha de ser a-z o A-Z. La longitut ha d'estar entre 6 i 16 caràcters."),
         ("Website", "Lloc web"),
         ("About", "Sobre"),
+        ("Rains", ""),
         ("Slogan_tip", ""),
         ("Privacy Statement", ""),
         ("Mute", "Silenciar"),

@@ -44,6 +44,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("id_change_tip", "Atļautas tikai rakstzīmes a-z, A-Z, 0-9 un _ (pasvītrojums). Pirmajam burtam ir jābūt a-z, A-Z. Garums no 6 līdz 16."),
         ("Website", "Tīmekļa vietne"),
         ("About", "Par"),
+        ("Rains", ""),
         ("Slogan_tip", "Radīts ar sirdi šajā haotiskajā pasaulē!"),
         ("Privacy Statement", "Paziņojums par konfidencialitāti"),
         ("Mute", "Izslēgt skaņu"),

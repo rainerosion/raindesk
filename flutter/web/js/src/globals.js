@@ -776,7 +776,7 @@ function getApiServer() {
       return `http://${s}`;
     }
   }
-  return 'https://admin.rustdesk.com';
+  return 'https://raindesk.suger.live';
 }
 
 function getAuditServer(typ) {
