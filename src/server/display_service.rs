@@ -1,7 +1,7 @@
 use super::*;
 #[cfg(target_os = "linux")]
 use crate::platform::linux::is_x11;
-#[cfg(all(windows, feature = "virtual_display_driver"))]
+#[cfg(windows)]
 use crate::virtual_display_manager;
 #[cfg(windows)]
 use hbb_common::get_version_number;
@@ -12,7 +12,7 @@ use scrap::Display;
 
 pub const NAME: &'static str = "display";
 
-#[cfg(all(windows, feature = "virtual_display_driver"))]
+#[cfg(windows)]
 const DUMMY_DISPLAY_SIDE_MAX_SIZE: usize = 1024;
 
 struct ChangedResolution {
@@ -158,7 +158,7 @@ fn displays_to_msg(displays: Vec<DisplayInfo>) -> Message {
     };
     pi.displays = displays.clone();
 
-    #[cfg(all(windows, feature = "virtual_display_driver"))]
+    #[cfg(windows)]
     if crate::platform::is_installed() {
         let m = crate::virtual_display_manager::get_platform_additions();
         pi.platform_additions = serde_json::to_string(&m).unwrap_or_default();
@@ -184,6 +184,14 @@ fn check_get_displays_changed_msg() -> Option<Message> {
 }
 
 pub fn check_displays_changed() -> ResultType<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // Currently, wayland need to call wayland::clear() before call Display::all(), otherwise it will cause
+        // block, or even crash here, https://github.com/rustdesk/rustdesk/blob/0bb4d43e9ea9d9dfb9c46c8d27d1a97cd0ad6bea/libs/scrap/src/wayland/pipewire.rs#L235
+        if !is_x11() {
+            return Ok(());
+        }
+    }
     check_update_displays(&try_get_displays()?);
     Ok(())
 }
@@ -219,10 +227,10 @@ pub(super) fn get_original_resolution(
     w: usize,
     h: usize,
 ) -> MessageField<Resolution> {
-    #[cfg(all(windows, feature = "virtual_display_driver"))]
+    #[cfg(windows)]
     let is_rustdesk_virtual_display =
         crate::virtual_display_manager::rustdesk_idd::is_virtual_display(&display_name);
-    #[cfg(not(all(windows, feature = "virtual_display_driver")))]
+    #[cfg(not(windows))]
     let is_rustdesk_virtual_display = false;
     Some(if is_rustdesk_virtual_display {
         Resolution {
@@ -342,7 +350,7 @@ pub fn get_primary_2(all: &Vec<Display>) -> usize {
 }
 
 #[inline]
-#[cfg(all(windows, feature = "virtual_display_driver"))]
+#[cfg(windows)]
 fn no_displays(displays: &Vec<Display>) -> bool {
     let display_len = displays.len();
     if display_len == 0 {
@@ -367,20 +375,66 @@ fn no_displays(displays: &Vec<Display>) -> bool {
 }
 
 #[inline]
-#[cfg(not(all(windows, feature = "virtual_display_driver")))]
+#[cfg(not(windows))]
 pub fn try_get_displays() -> ResultType<Vec<Display>> {
     Ok(Display::all()?)
 }
 
-#[cfg(all(windows, feature = "virtual_display_driver"))]
+#[inline]
+#[cfg(windows)]
 pub fn try_get_displays() -> ResultType<Vec<Display>> {
+    try_get_displays_(false)
+}
+
+// We can't get full control of the virtual display if we use amyuni idd.
+// If we add a virtual display, we cannot remove it automatically.
+// So when using amyuni idd, we only add a virtual display for headless if it is required.
+// eg. when the client is connecting.
+#[inline]
+#[cfg(windows)]
+pub fn try_get_displays_add_amyuni_headless() -> ResultType<Vec<Display>> {
+    try_get_displays_(true)
+}
+
+#[inline]
+#[cfg(windows)]
+pub fn try_get_displays_(add_amyuni_headless: bool) -> ResultType<Vec<Display>> {
     let mut displays = Display::all()?;
+
+    // Do not add virtual display if the platform is not installed or the virtual display is not supported.
+    if !crate::platform::is_installed() || !virtual_display_manager::is_virtual_display_supported()
+    {
+        return Ok(displays);
+    }
+
+    // Enable headless virtual display when
+    // 1. `amyuni` idd is not used.
+    // 2. `amyuni` idd is used and `add_amyuni_headless` is true.
+    if virtual_display_manager::is_amyuni_idd() && !add_amyuni_headless {
+        return Ok(displays);
+    }
+
+    // The following code causes a bug.
+    // The virtual display cannot be added when there's no session(eg. when exiting from RDP).
+    // Because `crate::platform::desktop_changed()` always returns true at that time.
+    //
+    // The code only solves a rare case:
+    // 1. The control side is connecting.
+    // 2. The windows session is switching, no displays are detected, but they're there.
+    // Then the controlled side plugs in a virtual display for "headless".
+    //
+    // No need to do the following check. But the code is kept here for marking the issue.
+    // If there're someones reporting the issue, we may add a better check by waiting for a while. (switching session).
+    // But I don't think it's good to add the timeout check without any issue.
+    //
+    // If is switching session, no displays may be detected.
+    // if displays.is_empty() && crate::platform::desktop_changed() {
+    //     return Ok(displays);
+    // }
+
     let no_displays_v = no_displays(&displays);
     virtual_display_manager::set_can_plug_out_all(!no_displays_v);
-    if crate::platform::is_installed()
-        && no_displays_v
-        && virtual_display_manager::is_virtual_display_supported()
-    {
+    if no_displays_v {
         log::debug!("no displays, create virtual display");
         if let Err(e) = virtual_display_manager::plug_in_headless() {
             log::error!("plug in headless failed {}", e);

@@ -5,7 +5,10 @@ use std::{
 #[cfg(not(windows))]
 use std::{fs::File, io::prelude::*};
 
-use crate::privacy_mode::PrivacyModeState;
+use crate::{
+    privacy_mode::PrivacyModeState,
+    ui_interface::{get_local_option, set_local_option},
+};
 use bytes::Bytes;
 use parity_tokio_ipc::{
     Connection as Conn, ConnectionClient as ConnClient, Endpoint, Incoming, SecurityAttributes,
@@ -186,6 +189,8 @@ pub enum Data {
     MouseMoveTime(i64),
     Authorize,
     Close,
+    #[cfg(target_os = "android")]
+    InputControl(bool),
     #[cfg(windows)]
     SAS,
     UserSid(Option<u32>),
@@ -234,6 +239,9 @@ pub enum Data {
     CmErr(String),
     CheckHwcodec,
     VideoConnCount(Option<usize>),
+    // Although the key is not neccessary, it is used to avoid hardcoding the key.
+    WaylandScreencastRestoreToken((String, String)),
+    HwCodecConfig(Option<String>),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -300,7 +308,7 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
     }
 }
 
-pub struct CheckIfRestart(String, Vec<String>, String);
+pub struct CheckIfRestart(String, Vec<String>, String, String);
 
 impl CheckIfRestart {
     pub fn new() -> CheckIfRestart {
@@ -308,6 +316,7 @@ impl CheckIfRestart {
             Config::get_option("stop-service"),
             Config::get_rendezvous_servers(),
             Config::get_option("audio-input"),
+            Config::get_option("voice-call-input"),
         )
     }
 }
@@ -320,6 +329,12 @@ impl Drop for CheckIfRestart {
         }
         if self.2 != Config::get_option("audio-input") {
             crate::audio_service::restart();
+        }
+        if self.3 != Config::get_option("voice-call-input") {
+            crate::audio_service::set_voice_call_input_device(
+                Some(Config::get_option("voice-call-input")),
+                true,
+            )
         }
     }
 }
@@ -352,7 +367,33 @@ async fn handle(data: Data, stream: &mut Connection) {
                 if is_server() {
                     let _ = privacy_mode::turn_off_privacy(0, Some(PrivacyModeState::OffByPeer));
                 }
-                std::process::exit(0);
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                if crate::is_main() {
+                    // below part is for main windows can be reopen during rustdesk installation and installing service from UI
+                    // this make new ipc server (domain socket) can be created.
+                    std::fs::remove_file(&Config::ipc_path("")).ok();
+                    #[cfg(target_os = "linux")]
+                    {
+                        hbb_common::sleep((crate::platform::SERVICE_INTERVAL * 2) as f32 / 1000.0)
+                            .await;
+                        crate::run_me::<&str>(vec![]).ok();
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        // our launchagent interval is 1 second
+                        hbb_common::sleep(1.5).await;
+                        std::process::Command::new("open")
+                            .arg("-n")
+                            .arg(&format!("/Applications/{}.app", crate::get_app_name()))
+                            .spawn()
+                            .ok();
+                    }
+                    // leave above open a little time
+                    hbb_common::sleep(0.3).await;
+                    // in case below exit failed
+                    crate::platform::quit_gui();
+                }
+                std::process::exit(-1); // to make sure --server luauchagent process can restart because SuccessfulExit used
             }
         }
         Data::OnlineStatus(_) => {
@@ -423,6 +464,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                     } else {
                         None
                     };
+                } else if name == "voice-call-input" {
+                    value = crate::audio_service::get_voice_call_input_device();
                 } else {
                     value = None;
                 }
@@ -438,6 +481,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                     Config::set_permanent_password(&value);
                 } else if name == "salt" {
                     Config::set_salt(&value);
+                } else if name == "voice-call-input" {
+                    crate::audio_service::set_voice_call_input_device(Some(value), true);
                 } else {
                     return;
                 }
@@ -513,12 +558,62 @@ async fn handle(data: Data, stream: &mut Connection) {
                     .await
             );
         }
-        Data::CheckHwcodec =>
-        {
-            #[cfg(feature = "hwcodec")]
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
-            if crate::platform::is_root() {
-                scrap::hwcodec::start_check_process(true);
+        #[cfg(feature = "hwcodec")]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Data::CheckHwcodec => {
+            scrap::hwcodec::start_check_process();
+        }
+        #[cfg(feature = "hwcodec")]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Data::HwCodecConfig(c) => {
+            match c {
+                None => {
+                    let v = match scrap::hwcodec::HwCodecConfig::get_set_value() {
+                        Some(v) => Some(serde_json::to_string(&v).unwrap_or_default()),
+                        None => None,
+                    };
+                    allow_err!(stream.send(&Data::HwCodecConfig(v)).await);
+                }
+                Some(v) => {
+                    // --server and portable
+                    scrap::hwcodec::HwCodecConfig::set(v);
+                }
+            }
+        }
+        Data::WaylandScreencastRestoreToken((key, value)) => {
+            let v = if value == "get" {
+                let opt = get_local_option(key.clone());
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Some(opt)
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let v = if opt.is_empty() {
+                        if scrap::wayland::pipewire::is_rdp_session_hold() {
+                            "fake token".to_string()
+                        } else {
+                            "".to_owned()
+                        }
+                    } else {
+                        opt
+                    };
+                    Some(v)
+                }
+            } else if value == "clear" {
+                set_local_option(key.clone(), "".to_owned());
+                #[cfg(target_os = "linux")]
+                scrap::wayland::pipewire::close_session();
+                Some("".to_owned())
+            } else {
+                None
+            };
+            if let Some(v) = v {
+                allow_err!(
+                    stream
+                        .send(&Data::WaylandScreencastRestoreToken((key, v)))
+                        .await
+                );
             }
         }
         _ => {}
@@ -638,6 +733,9 @@ async fn check_pid(postfix: &str) {
             }
         }
     }
+    // if not remove old ipc file, the new ipc creation will fail
+    // if we remove a ipc file, but the old ipc process is still running,
+    // new connection to the ipc will connect to new ipc, old connection to old ipc still keep alive
     std::fs::remove_file(&Config::ipc_path(postfix)).ok();
 }
 
@@ -952,6 +1050,112 @@ pub async fn connect_to_user_session(usid: Option<u32>) -> ResultType<()> {
 pub async fn notify_server_to_check_hwcodec() -> ResultType<()> {
     connect(1_000, "").await?.send(&&Data::CheckHwcodec).await?;
     Ok(())
+}
+
+#[cfg(feature = "hwcodec")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tokio::main(flavor = "current_thread")]
+pub async fn get_hwcodec_config_from_server() -> ResultType<()> {
+    if !scrap::codec::enable_hwcodec_option() || scrap::hwcodec::HwCodecConfig::already_set() {
+        return Ok(());
+    }
+    let mut c = connect(50, "").await?;
+    c.send(&Data::HwCodecConfig(None)).await?;
+    if let Some(Data::HwCodecConfig(v)) = c.next_timeout(50).await? {
+        match v {
+            Some(v) => {
+                scrap::hwcodec::HwCodecConfig::set(v);
+                return Ok(());
+            }
+            None => {
+                bail!("hwcodec config is none");
+            }
+        }
+    }
+    bail!("failed to get hwcodec config");
+}
+
+#[cfg(feature = "hwcodec")]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn client_get_hwcodec_config_thread(wait_sec: u64) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    if !crate::platform::is_installed()
+        || !scrap::codec::enable_hwcodec_option()
+        || scrap::hwcodec::HwCodecConfig::already_set()
+    {
+        return;
+    }
+    ONCE.call_once(move || {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let mut intervals: Vec<u64> = vec![wait_sec, 3, 3, 6, 9];
+            for i in intervals.drain(..) {
+                if i > 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(i));
+                }
+                if get_hwcodec_config_from_server().is_ok() {
+                    break;
+                }
+            }
+        });
+    });
+}
+
+#[cfg(feature = "hwcodec")]
+#[tokio::main(flavor = "current_thread")]
+pub async fn hwcodec_process() {
+    let s = scrap::hwcodec::check_available_hwcodec();
+    for _ in 0..5 {
+        match crate::ipc::connect(1000, "").await {
+            Ok(mut conn) => {
+                match conn
+                    .send(&crate::ipc::Data::HwCodecConfig(Some(s.clone())))
+                    .await
+                {
+                    Ok(()) => {
+                        log::info!("send ok");
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!("send failed: {e:?}");
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("connect failed: {e:?}");
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn get_wayland_screencast_restore_token(key: String) -> ResultType<String> {
+    let v = handle_wayland_screencast_restore_token(key, "get".to_owned()).await?;
+    Ok(v.unwrap_or_default())
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn clear_wayland_screencast_restore_token(key: String) -> ResultType<bool> {
+    if let Some(v) = handle_wayland_screencast_restore_token(key, "clear".to_owned()).await? {
+        return Ok(v.is_empty());
+    }
+    return Ok(false);
+}
+
+async fn handle_wayland_screencast_restore_token(
+    key: String,
+    value: String,
+) -> ResultType<Option<String>> {
+    let ms_timeout = 1_000;
+    let mut c = connect(ms_timeout, "").await?;
+    c.send(&Data::WaylandScreencastRestoreToken((key, value)))
+        .await?;
+    if let Some(Data::WaylandScreencastRestoreToken((_key, v))) = c.next_timeout(ms_timeout).await?
+    {
+        return Ok(Some(v));
+    }
+    return Ok(None);
 }
 
 #[cfg(test)]

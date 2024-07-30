@@ -327,23 +327,15 @@ class InputModel {
 
   InputModel(this.parent) {
     sessionId = parent.target!.sessionId;
-
-    // It is ok to call updateKeyboardMode() directly.
-    // Because `bind` is initialized in `PlatformFFI.init()` which is called very early.
-    // But we still wrap it in a Future.delayed() to make it more clear.
-    Future.delayed(Duration(milliseconds: 100), () {
-      updateKeyboardMode();
-    });
   }
 
+  // This function must be called after the peer info is received.
+  // Because `sessionGetKeyboardMode` relies on the peer version.
   updateKeyboardMode() async {
     // * Currently mobile does not enable map mode
     if (isDesktop || isWebDesktop) {
-      if (keyboardMode.isEmpty) {
-        keyboardMode =
-            await bind.sessionGetKeyboardMode(sessionId: sessionId) ??
-                kKeyLegacyMode;
-      }
+      keyboardMode = await bind.sessionGetKeyboardMode(sessionId: sessionId) ??
+          kKeyLegacyMode;
     }
   }
 
@@ -1160,4 +1152,27 @@ class InputModel {
       platformFFI.stopDesktopWebListener();
     }
   }
+
+  void onMobileBack() => tap(MouseButtons.right);
+  void onMobileHome() => tap(MouseButtons.wheel);
+  Future<void> onMobileApps() async {
+    sendMouse('down', MouseButtons.wheel);
+    await Future.delayed(const Duration(milliseconds: 500));
+    sendMouse('up', MouseButtons.wheel);
+  }
+
+  // Simulate a key press event.
+  // `usbHidUsage` is the USB HID usage code of the key.
+  Future<void> tapHidKey(int usbHidUsage) async {
+    inputRawKey(kKeyFlutterKey, usbHidUsage, 0, true);
+    await Future.delayed(Duration(milliseconds: 100));
+    inputRawKey(kKeyFlutterKey, usbHidUsage, 0, false);
+  }
+
+  Future<void> onMobileVolumeUp() async =>
+      await tapHidKey(PhysicalKeyboardKey.audioVolumeUp.usbHidUsage);
+  Future<void> onMobileVolumeDown() async =>
+      await tapHidKey(PhysicalKeyboardKey.audioVolumeDown.usbHidUsage);
+  Future<void> onMobilePower() async =>
+      await tapHidKey(PhysicalKeyboardKey.power.usbHidUsage);
 }

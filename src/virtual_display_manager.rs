@@ -2,7 +2,7 @@ use hbb_common::{bail, platform::windows::is_windows_version_or_greater, ResultT
 use std::sync::atomic;
 
 // This string is defined here.
-//  https://github.com/fufesou/RustDeskIddDriver/blob/b370aad3f50028b039aad211df60c8051c4a64d6/RustDeskIddDriver/RustDeskIddDriver.inf#LL73C1-L73C40
+//  https://github.com/rustdesk-org/RustDeskIddDriver/blob/b370aad3f50028b039aad211df60c8051c4a64d6/RustDeskIddDriver/RustDeskIddDriver.inf#LL73C1-L73C40
 pub const RUSTDESK_IDD_DEVICE_STRING: &'static str = "RustDeskIddDriver Device\0";
 pub const AMYUNI_IDD_DEVICE_STRING: &'static str = "USB Mobile Monitor Virtual Display\0";
 
@@ -427,6 +427,7 @@ pub mod amyuni_idd {
 
     lazy_static::lazy_static! {
         static ref LOCK: Arc<Mutex<()>> = Default::default();
+        static ref LAST_PLUG_IN_HEADLESS_TIME: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     }
 
     fn get_deviceinstaller64_work_dir() -> ResultType<Option<Vec<u8>>> {
@@ -570,9 +571,14 @@ pub mod amyuni_idd {
     }
 
     pub fn plug_in_headless() -> ResultType<()> {
-        if get_monitor_count() > 0 {
-            return Ok(());
+        let mut tm = LAST_PLUG_IN_HEADLESS_TIME.lock().unwrap();
+        if let Some(tm) = &mut *tm {
+            if tm.elapsed() < Duration::from_secs(3) {
+                bail!("Plugging in too frequently.");
+            }
         }
+        *tm = Some(Instant::now());
+        drop(tm);
 
         let mut is_async = false;
         if let Err(e) = check_install_driver(&mut is_async) {

@@ -34,6 +34,7 @@ class _PortForwardTabPageState extends State<PortForwardTabPage> {
       WindowController.fromWindowId(windowId())
           .setTitle(getWindowNameWithId(id));
     };
+    tabController.onRemoved = (_, id) => onRemoveId(id);
     tabController.add(TabInfo(
         key: params['id'],
         label: params['id'],
@@ -53,8 +54,6 @@ class _PortForwardTabPageState extends State<PortForwardTabPage> {
   @override
   void initState() {
     super.initState();
-
-    tabController.onRemoved = (_, id) => onRemoveId(id);
 
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       debugPrint(
@@ -97,21 +96,31 @@ class _PortForwardTabPageState extends State<PortForwardTabPage> {
 
   @override
   Widget build(BuildContext context) {
-    final tabWidget = Container(
-      decoration: BoxDecoration(
-          border: Border.all(color: MyTheme.color(context).border!)),
-      child: Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.background,
-          body: DesktopTab(
-            controller: tabController,
-            onWindowCloseButton: () async {
-              tabController.clear();
-              return true;
-            },
-            tail: AddButton().paddingOnly(left: 10),
-            labelGetter: DesktopTab.tablabelGetter,
-          )),
+    final child = Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: DesktopTab(
+        controller: tabController,
+        onWindowCloseButton: () async {
+          tabController.clear();
+          return true;
+        },
+        tail: AddButton(),
+        selectedBorderColor: MyTheme.accent,
+        labelGetter: DesktopTab.tablabelGetter,
+      ),
     );
+    final tabWidget = isLinux
+        ? buildVirtualWindowFrame(
+            context,
+            Scaffold(
+                backgroundColor: Theme.of(context).colorScheme.background,
+                body: child),
+          )
+        : Container(
+            decoration: BoxDecoration(
+                border: Border.all(color: MyTheme.color(context).border!)),
+            child: child,
+          );
     return isMacOS || kUseCompatibleUiMode
         ? tabWidget
         : Obx(

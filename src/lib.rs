@@ -47,6 +47,8 @@ mod custom_server;
 mod lang;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod port_forward;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod clipboard;
 
 #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -66,5 +68,5 @@ pub mod clipboard_file;
 
 pub mod privacy_mode;
 
-#[cfg(all(windows, feature = "virtual_display_driver"))]
+#[cfg(windows)]
 pub mod virtual_display_manager;

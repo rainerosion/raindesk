@@ -25,8 +25,8 @@ flutter_build_dir_2 = f'flutter/{flutter_build_dir}'
 skip_cargo = False
 
 
-def get_arch() -> str:
-    custom_arch = os.environ.get("ARCH")
+def get_deb_arch() -> str:
+    custom_arch = os.environ.get("DEB_ARCH")
     if custom_arch is None:
         return "amd64"
     return custom_arch
@@ -48,15 +48,7 @@ def get_version():
 
 
 def parse_rc_features(feature):
-    available_features = {
-        'PrivacyMode': {
-            'platform': ['windows'],
-            'zip_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.3'
-                       '/TempTopMostWindow_x64.zip',
-            'checksum_url': 'https://github.com/fufesou/RustDeskTempTopMostWindow/releases/download/v0.3/checksum_md5',
-            'include': ['WindowInjection.dll'],
-        }
-    }
+    available_features = {}
     apply_features = {}
     if not feature:
         feature = []
@@ -81,7 +73,6 @@ def parse_rc_features(feature):
     elif isinstance(feature, list):
         if windows:
             # download third party is deprecated, we use github ci instead.
-            # force add PrivacyMode
             # feature.append('PrivacyMode')
             pass
         for feat in feature:
@@ -108,7 +99,7 @@ def make_parser():
         nargs='+',
         default='',
         help='Integrate features, windows only.'
-             'Available: PrivacyMode. Special value is "ALL" and empty "". Default is empty.')
+             'Available: [Not used for now]. Special value is "ALL" and empty "". Default is empty.')
     parser.add_argument('--flutter', action='store_true',
                         help='Build flutter package', default=False)
     parser.add_argument(
@@ -133,16 +124,6 @@ def make_parser():
         help='Build with unix file copy paste feature'
     )
     parser.add_argument(
-        '--flatpak',
-        action='store_true',
-        help='Build rustdesk libs with the flatpak feature enabled'
-    )
-    parser.add_argument(
-        '--appimage',
-        action='store_true',
-        help='Build rustdesk libs with the appimage feature enabled'
-    )
-    parser.add_argument(
         '--skip-cargo',
         action='store_true',
         help='Skip cargo build process, only flutter version + Linux supported currently'
@@ -152,12 +133,6 @@ def make_parser():
             '--skip-portable-pack',
             action='store_true',
             help='Skip packing, only flutter version + Windows supported'
-        )
-        parser.add_argument(
-            '--virtual-display',
-            action='store_true',
-            default=False,
-            help='Build rustdesk libs with the virtual display feature enabled'
         )
     parser.add_argument(
         "--package",
@@ -292,16 +267,8 @@ def get_features(args):
         features.append('vram')
     if args.flutter:
         features.append('flutter')
-        features.append('flutter_texture_render')
-    if args.flatpak:
-        features.append('flatpak')
-    if args.appimage:
-        features.append('appimage')
     if args.unix_file_copy_paste:
         features.append('unix-file-copy-paste')
-    if windows:
-        if args.virtual_display:
-            features.append('virtual_display_driver')
     print("features:", features)
     return features
 
@@ -318,7 +285,7 @@ Homepage: https://rustdesk.com
 Depends: libgtk-3-0, libxcb-randr0, libxdo3, libxfixes3, libxcb-shape0, libxcb-xfixes0, libasound2, libsystemd0, curl, libva-drm2, libva-x11-2, libvdpau1, libgstreamer-plugins-base1.0-0, libpam0g, libappindicator3-1, gstreamer1.0-pipewire
 Description: A remote control software.
 
-""" % (version, get_arch())
+""" % (version, get_deb_arch())
     file = open(control_file_path, "w")
     file.write(content)
     file.close()

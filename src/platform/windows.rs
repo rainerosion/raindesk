@@ -18,7 +18,7 @@ use hbb_common::{
 use std::process::{Command, Stdio};
 use std::{
     collections::HashMap,
-    ffi::OsString,
+    ffi::{CString, OsString},
     fs, io,
     io::prelude::*,
     mem,
@@ -36,6 +36,7 @@ use winapi::{
     um::{
         errhandlingapi::GetLastError,
         handleapi::CloseHandle,
+        libloaderapi::{GetProcAddress, LoadLibraryA},
         minwinbase::STILL_ACTIVE,
         processthreadsapi::{
             GetCurrentProcess, GetCurrentProcessId, GetExitCodeProcess, OpenProcess,
@@ -47,8 +48,8 @@ use winapi::{
         wingdi::*,
         winnt::{
             TokenElevation, ES_AWAYMODE_REQUIRED, ES_CONTINUOUS, ES_DISPLAY_REQUIRED,
-            ES_SYSTEM_REQUIRED, HANDLE, PROCESS_QUERY_LIMITED_INFORMATION, TOKEN_ELEVATION,
-            TOKEN_QUERY,
+            ES_SYSTEM_REQUIRED, HANDLE, PROCESS_ALL_ACCESS, PROCESS_QUERY_LIMITED_INFORMATION,
+            TOKEN_ELEVATION, TOKEN_QUERY,
         },
         winreg::HKEY_CURRENT_USER,
         winuser::*,
@@ -65,11 +66,15 @@ use windows_service::{
 use winreg::enums::*;
 use winreg::RegKey;
 
+pub const FLUTTER_RUNNER_WIN32_WINDOW_CLASS: &'static str = "FLUTTER_RUNNER_WIN32_WINDOW"; // main window, install window
+pub const EXPLORER_EXE: &'static str = "explorer.exe";
+pub const SET_FOREGROUND_WINDOW: &'static str = "SET_FOREGROUND_WINDOW";
+
 pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
     unsafe {
-        let hWnd = GetForegroundWindow();
+        let hwnd = GetForegroundWindow();
         let mut rect: RECT = mem::zeroed();
-        if GetWindowRect(hWnd, &mut rect as *mut RECT) == 0 {
+        if GetWindowRect(hwnd, &mut rect as *mut RECT) == 0 {
             return None;
         }
         displays.iter().position(|display| {
@@ -457,8 +462,18 @@ const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
 extern "C" {
     fn get_current_session(rdp: BOOL) -> DWORD;
-    fn LaunchProcessWin(cmd: *const u16, session_id: DWORD, as_user: BOOL) -> HANDLE;
-    fn GetSessionUserTokenWin(lphUserToken: LPHANDLE, dwSessionId: DWORD, as_user: BOOL) -> BOOL;
+    fn LaunchProcessWin(
+        cmd: *const u16,
+        session_id: DWORD,
+        as_user: BOOL,
+        token_pid: &mut DWORD,
+    ) -> HANDLE;
+    fn GetSessionUserTokenWin(
+        lphUserToken: LPHANDLE,
+        dwSessionId: DWORD,
+        as_user: BOOL,
+        token_pid: &mut DWORD,
+    ) -> BOOL;
     fn selectInputDesktop() -> BOOL;
     fn inputDesktopSelected() -> BOOL;
     fn is_windows_server() -> BOOL;
@@ -641,9 +656,13 @@ async fn launch_server(session_id: DWORD, close_first: bool) -> ResultType<HANDL
         .chain(Some(0).into_iter())
         .collect();
     let wstr = wstr.as_ptr();
-    let h = unsafe { LaunchProcessWin(wstr, session_id, FALSE) };
+    let mut token_pid = 0;
+    let h = unsafe { LaunchProcessWin(wstr, session_id, FALSE, &mut token_pid) };
     if h.is_null() {
         log::error!("Failed to launch server: {}", io::Error::last_os_error());
+        if token_pid == 0 {
+            log::error!("No process winlogon.exe");
+        }
     }
     Ok(h)
 }
@@ -663,8 +682,17 @@ pub fn run_as_user(arg: Vec<&str>) -> ResultType<Option<std::process::Child>> {
         .chain(Some(0).into_iter())
         .collect();
     let wstr = wstr.as_ptr();
-    let h = unsafe { LaunchProcessWin(wstr, session_id, TRUE) };
+    let mut token_pid = 0;
+    let h = unsafe { LaunchProcessWin(wstr, session_id, TRUE, &mut token_pid) };
     if h.is_null() {
+        if token_pid == 0 {
+            bail!(
+                "Failed to launch {:?} with session id {}: no process {}",
+                arg,
+                session_id,
+                EXPLORER_EXE
+            );
+        }
         bail!(
             "Failed to launch {:?} with session id {}: {}",
             arg,
@@ -808,12 +836,12 @@ fn get_current_session_username() -> Option<String> {
 
 fn get_session_username(session_id: u32) -> String {
     extern "C" {
-        fn get_session_user_info(path: *mut u16, n: u32, rdp: bool, session_id: u32) -> u32;
+        fn get_session_user_info(path: *mut u16, n: u32, session_id: u32) -> u32;
     }
     let buff_size = 256;
     let mut buff: Vec<u16> = Vec::with_capacity(buff_size);
     buff.resize(buff_size, 0);
-    let n = unsafe { get_session_user_info(buff.as_mut_ptr(), buff_size as _, true, session_id) };
+    let n = unsafe { get_session_user_info(buff.as_mut_ptr(), buff_size as _, session_id) };
     if n == 0 {
         return "".to_owned();
     }
@@ -1538,11 +1566,13 @@ pub fn quit_gui() {
 pub fn get_user_token(session_id: u32, as_user: bool) -> HANDLE {
     let mut token = NULL as HANDLE;
     unsafe {
+        let mut _token_pid = 0;
         if FALSE
             == GetSessionUserTokenWin(
                 &mut token as _,
                 session_id,
                 if as_user { TRUE } else { FALSE },
+                &mut _token_pid,
             )
         {
             NULL as _
@@ -1998,7 +2028,7 @@ pub fn get_unicode_from_vk(vk: u32) -> Option<u16> {
         let current_window_thread_id = GetWindowThreadProcessId(GetForegroundWindow(), null_mut());
         let layout = GetKeyboardLayout(current_window_thread_id);
 
-        // refs: https://github.com/fufesou/rdev/blob/25a99ce71ab42843ad253dd51e6a35e83e87a8a4/src/windows/keyboard.rs#L115
+        // refs: https://github.com/rustdesk-org/rdev/blob/25a99ce71ab42843ad253dd51e6a35e83e87a8a4/src/windows/keyboard.rs#L115
         let press_state = 129;
         let mut state: [BYTE; 256] = [0; 256];
         let shift_left = rdev::get_modifier(rdev::Key::ShiftLeft);
@@ -2028,6 +2058,7 @@ pub fn is_process_consent_running() -> ResultType<bool> {
         .output()?;
     Ok(output.status.success() && !output.stdout.is_empty())
 }
+
 pub struct WakeLock(u32);
 // Failed to compile keepawake-rs on i686
 impl WakeLock {
@@ -2183,12 +2214,10 @@ sc start {app_name}
 
 fn run_after_run_cmds(silent: bool) {
     let (_, _, _, exe) = get_install_info();
-    let app = crate::get_app_name().to_lowercase();
     if !silent {
         log::debug!("Spawn new window");
         allow_err!(std::process::Command::new("cmd")
-            .arg("/c")
-            .arg(format!("timeout /t 2 & start {app}://"))
+            .args(&["/c", "timeout", "/t", "2", "&", &format!("{exe}")])
             .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
             .spawn());
     }
@@ -2418,4 +2447,96 @@ pub fn is_x64() -> bool {
         GetNativeSystemInfo(&mut sys_info as _);
     }
     unsafe { sys_info.u.s().wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 }
+}
+
+pub fn try_kill_rustdesk_main_window_process() -> ResultType<()> {
+    // Kill rustdesk.exe without extra arg, should only be called by --server
+    // We can find the exact process which occupies the ipc, see more from https://github.com/winsiderss/systeminformer
+    log::info!("try kill rustdesk main window process");
+    use hbb_common::sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_processes();
+    let my_uid = sys
+        .process((std::process::id() as usize).into())
+        .map(|x| x.user_id())
+        .unwrap_or_default();
+    let my_pid = std::process::id();
+    let app_name = crate::get_app_name().to_lowercase();
+    if app_name.is_empty() {
+        bail!("app name is empty");
+    }
+    for (_, p) in sys.processes().iter() {
+        let p_name = p.name().to_lowercase();
+        // name equal
+        if !(p_name == app_name || p_name == app_name.clone() + ".exe") {
+            continue;
+        }
+        // arg more than 1
+        if p.cmd().len() < 1 {
+            continue;
+        }
+        // first arg contain app name
+        if !p.cmd()[0].to_lowercase().contains(&p_name) {
+            continue;
+        }
+        // only one arg or the second arg is empty uni link
+        let is_empty_uni = p.cmd().len() == 2 && crate::common::is_empty_uni_link(&p.cmd()[1]);
+        if !(p.cmd().len() == 1 || is_empty_uni) {
+            continue;
+        }
+        // skip self
+        if p.pid().as_u32() == my_pid {
+            continue;
+        }
+        // because we call it with --server, so we can check user_id, remove this if call it with user process
+        if p.user_id() == my_uid {
+            log::info!("user id equal, continue");
+            continue;
+        }
+        log::info!("try kill process: {:?}, pid = {:?}", p.cmd(), p.pid());
+        nt_terminate_process(p.pid().as_u32())?;
+        log::info!("kill process success: {:?}, pid = {:?}", p.cmd(), p.pid());
+        return Ok(());
+    }
+    bail!("failed to find rustdesk main window process");
+}
+
+fn nt_terminate_process(process_id: DWORD) -> ResultType<()> {
+    type NtTerminateProcess = unsafe extern "system" fn(HANDLE, DWORD) -> DWORD;
+    unsafe {
+        let h_module = LoadLibraryA(CString::new("ntdll.dll")?.as_ptr());
+        if !h_module.is_null() {
+            let f_nt_terminate_process: NtTerminateProcess = std::mem::transmute(GetProcAddress(
+                h_module,
+                CString::new("NtTerminateProcess")?.as_ptr(),
+            ));
+            let h_token = OpenProcess(PROCESS_ALL_ACCESS, 0, process_id);
+            if !h_token.is_null() {
+                if f_nt_terminate_process(h_token, 1) == 0 {
+                    log::info!("terminate process {} success", process_id);
+                    CloseHandle(h_token);
+                    return Ok(());
+                } else {
+                    CloseHandle(h_token);
+                    bail!("NtTerminateProcess {} failed", process_id);
+                }
+            } else {
+                bail!("OpenProcess {} failed", process_id);
+            }
+        } else {
+            bail!("Failed to load ntdll.dll");
+        }
+    }
+}
+
+pub fn try_set_window_foreground(window: HWND) {
+    let env_key = SET_FOREGROUND_WINDOW;
+    if let Ok(value) = std::env::var(env_key) {
+        if value == "1" {
+            unsafe {
+                SetForegroundWindow(window);
+            }
+            std::env::remove_var(env_key);
+        }
+    }
 }

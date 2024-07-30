@@ -2,6 +2,7 @@ use hbb_common::regex::Regex;
 use std::ops::Deref;
 
 mod ar;
+mod be;
 mod bg;
 mod ca;
 mod cn;
@@ -13,6 +14,7 @@ mod en;
 mod eo;
 mod es;
 mod et;
+mod eu;
 mod fa;
 mod fr;
 mod he;
@@ -54,8 +56,10 @@ pub const LANGS: &[(&str, &str)] = &[
     ("pt", "Português"),
     ("es", "Español"),
     ("et", "Eesti keel"),
+    ("eu", "Euskara"),
     ("hu", "Magyar"),
     ("bg", "Български"),
+    ("be", "Беларуская"),
     ("ru", "Русский"),
     ("sk", "Slovenčina"),
     ("id", "Indonesia"),
@@ -124,6 +128,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "nl" => nl::T.deref(),
         "es" => es::T.deref(),
         "et" => et::T.deref(),
+        "eu" => eu::T.deref(),
         "hu" => hu::T.deref(),
         "ru" => ru::T.deref(),
         "eo" => eo::T.deref(),
@@ -153,6 +158,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "lv" => lv::T.deref(),
         "ar" => ar::T.deref(),
         "bg" => bg::T.deref(),
+        "be" => be::T.deref(),
         "he" => he::T.deref(),
         "hr" => hr::T.deref(),
         _ => en::T.deref(),
