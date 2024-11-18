@@ -61,7 +61,8 @@ class DesktopSettingPage extends StatefulWidget {
   final SettingsTabKey initialTabkey;
   static final List<SettingsTabKey> tabKeys = [
     SettingsTabKey.general,
-    if (!bind.isOutgoingOnly() &&
+    if (!isWeb &&
+        !bind.isOutgoingOnly() &&
         !bind.isDisableSettings() &&
         bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
       SettingsTabKey.safety,
@@ -216,7 +217,7 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
             width: _kTabWidth,
             child: Column(
               children: [
-                _header(),
+                _header(context),
                 Flexible(child: _listView(tabs: _settingTabs())),
               ],
             ),
@@ -239,21 +240,40 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
     );
   }
 
-  Widget _header() {
+  Widget _header(BuildContext context) {
+    final settingsText = Text(
+      translate('Settings'),
+      textAlign: TextAlign.left,
+      style: const TextStyle(
+        color: _accentColor,
+        fontSize: _kTitleFontSize,
+        fontWeight: FontWeight.w400,
+      ),
+    );
     return Row(
       children: [
-        SizedBox(
-          height: 62,
-          child: Text(
-            translate('Settings'),
-            textAlign: TextAlign.left,
-            style: const TextStyle(
-              color: _accentColor,
-              fontSize: _kTitleFontSize,
-              fontWeight: FontWeight.w400,
+        if (isWeb)
+          IconButton(
+            onPressed: () {
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              }
+            },
+            icon: Icon(Icons.arrow_back),
+          ).marginOnly(left: 5),
+        if (isWeb)
+          SizedBox(
+            height: 62,
+            child: Align(
+              alignment: Alignment.center,
+              child: settingsText,
             ),
-          ),
-        ).marginOnly(left: 20, top: 10),
+          ).marginOnly(left: 20),
+        if (!isWeb)
+          SizedBox(
+            height: 62,
+            child: settingsText,
+          ).marginOnly(left: 20, top: 10),
         const Spacer(),
       ],
     );
@@ -322,7 +342,8 @@ class _General extends StatefulWidget {
 }
 
 class _GeneralState extends State<_General> {
-  final RxBool serviceStop = Get.find<RxBool>(tag: 'stop-service');
+  final RxBool serviceStop =
+      isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
   RxBool serviceBtnEnabled = true.obs;
 
   @override
@@ -334,13 +355,13 @@ class _GeneralState extends State<_General> {
           physics: DraggableNeverScrollableScrollPhysics(),
           controller: scrollController,
           children: [
-            service(),
+            if (!isWeb) service(),
             theme(),
             _Card(title: 'Language', children: [language()]),
-            hwcodec(),
-            audio(context),
-            record(context),
-            WaylandCard(),
+            if (!isWeb) hwcodec(),
+            if (!isWeb) audio(context),
+            if (!isWeb) record(context),
+            if (!isWeb) WaylandCard(),
             other()
           ],
         ).marginOnly(bottom: _kListViewBottomMargin));
@@ -348,8 +369,8 @@ class _GeneralState extends State<_General> {
 
   Widget theme() {
     final current = MyTheme.getThemeModePreference().toShortString();
-    onChanged(String value) {
-      MyTheme.changeDarkMode(MyTheme.themeModeFromString(value));
+    onChanged(String value) async {
+      await MyTheme.changeDarkMode(MyTheme.themeModeFromString(value));
       setState(() {});
     }
 
@@ -394,13 +415,13 @@ class _GeneralState extends State<_General> {
 
   Widget other() {
     final children = <Widget>[
-      if (!bind.isIncomingOnly())
+      if (!isWeb && !bind.isIncomingOnly())
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
             kOptionEnableConfirmClosingTabs,
             isServer: false),
       _OptionCheckBox(context, 'Adaptive bitrate', kOptionEnableAbr),
-      wallpaper(),
-      if (!bind.isIncomingOnly()) ...[
+      if (!isWeb) wallpaper(),
+      if (!isWeb && !bind.isIncomingOnly()) ...[
         _OptionCheckBox(
           context,
           'Open connection in new tab',
@@ -417,18 +438,19 @@ class _GeneralState extends State<_General> {
               kOptionAllowAlwaysSoftwareRender,
             ),
           ),
-        Tooltip(
-          message: translate('texture_render_tip'),
-          child: _OptionCheckBox(
-            context,
-            "Use texture rendering",
-            kOptionTextureRender,
-            optGetter: bind.mainGetUseTextureRender,
-            optSetter: (k, v) async =>
-                await bind.mainSetLocalOption(key: k, value: v ? 'Y' : 'N'),
+        if (!isWeb)
+          Tooltip(
+            message: translate('texture_render_tip'),
+            child: _OptionCheckBox(
+              context,
+              "Use texture rendering",
+              kOptionTextureRender,
+              optGetter: bind.mainGetUseTextureRender,
+              optSetter: (k, v) async =>
+                  await bind.mainSetLocalOption(key: k, value: v ? 'Y' : 'N'),
+            ),
           ),
-        ),
-        if (!bind.isCustomClient())
+        if (!isWeb && !bind.isCustomClient())
           _OptionCheckBox(
             context,
             'Check for software update on startup',
@@ -443,7 +465,7 @@ class _GeneralState extends State<_General> {
           )
       ],
     ];
-    if (bind.mainShowOption(key: kOptionAllowLinuxHeadless)) {
+    if (!isWeb && bind.mainShowOption(key: kOptionAllowLinuxHeadless)) {
       children.add(_OptionCheckBox(
           context, 'Allow linux headless', kOptionAllowLinuxHeadless));
     }
@@ -515,16 +537,16 @@ class _GeneralState extends State<_General> {
     }
 
     builder(devices, currentDevice, setDevice) {
-      return _Card(title: 'Audio Input Device', children: [
-        ...devices.map((device) => _Radio<String>(context,
-                value: device,
-                groupValue: currentDevice,
-                autoNewLine: false,
-                label: device, onChanged: (value) {
-              setDevice(value);
-              setState(() {});
-            }))
-      ]);
+      final child = ComboBox(
+        keys: devices,
+        values: devices,
+        initialKey: currentDevice,
+        onChanged: (key) async {
+          setDevice(key);
+          setState(() {});
+        },
+      ).marginOnly(left: _kContentHMargin);
+      return _Card(title: 'Audio Input Device', children: [child]);
     }
 
     return AudioInput(builder: builder, isCm: false, isVoiceCall: false);
@@ -553,12 +575,18 @@ class _GeneralState extends State<_General> {
       bool root_dir_exists = map['root_dir_exists']!;
       bool user_dir_exists = map['user_dir_exists']!;
       return _Card(title: 'Recording', children: [
-        _OptionCheckBox(context, 'Automatically record incoming sessions',
-            kOptionAllowAutoRecordIncoming),
-        if (showRootDir)
+        if (!bind.isOutgoingOnly())
+          _OptionCheckBox(context, 'Automatically record incoming sessions',
+              kOptionAllowAutoRecordIncoming),
+        if (!bind.isIncomingOnly())
+          _OptionCheckBox(context, 'Automatically record outgoing sessions',
+              kOptionAllowAutoRecordOutgoing,
+              isServer: false),
+        if (showRootDir && !bind.isOutgoingOnly())
           Row(
             children: [
-              Text('${translate("Incoming")}:'),
+              Text(
+                  '${translate(bind.isIncomingOnly() ? "Directory" : "Incoming")}:'),
               Expanded(
                 child: GestureDetector(
                     onTap: root_dir_exists
@@ -575,45 +603,49 @@ class _GeneralState extends State<_General> {
               ),
             ],
           ).marginOnly(left: _kContentHMargin),
-        Row(
-          children: [
-            Text('${translate(showRootDir ? "Outgoing" : "Directory")}:'),
-            Expanded(
-              child: GestureDetector(
-                  onTap: user_dir_exists
-                      ? () => launchUrl(Uri.file(user_dir))
-                      : null,
-                  child: Text(
-                    user_dir,
-                    softWrap: true,
-                    style: user_dir_exists
-                        ? const TextStyle(decoration: TextDecoration.underline)
+        if (!(showRootDir && bind.isIncomingOnly()))
+          Row(
+            children: [
+              Text(
+                  '${translate((showRootDir && !bind.isOutgoingOnly()) ? "Outgoing" : "Directory")}:'),
+              Expanded(
+                child: GestureDetector(
+                    onTap: user_dir_exists
+                        ? () => launchUrl(Uri.file(user_dir))
                         : null,
-                  )).marginOnly(left: 10),
-            ),
-            ElevatedButton(
-                    onPressed: isOptionFixed(kOptionVideoSaveDirectory)
-                        ? null
-                        : () async {
-                            String? initialDirectory;
-                            if (await Directory.fromUri(Uri.directory(user_dir))
-                                .exists()) {
-                              initialDirectory = user_dir;
-                            }
-                            String? selectedDirectory =
-                                await FilePicker.platform.getDirectoryPath(
-                                    initialDirectory: initialDirectory);
-                            if (selectedDirectory != null) {
-                              await bind.mainSetOption(
-                                  key: kOptionVideoSaveDirectory,
-                                  value: selectedDirectory);
-                              setState(() {});
-                            }
-                          },
-                    child: Text(translate('Change')))
-                .marginOnly(left: 5),
-          ],
-        ).marginOnly(left: _kContentHMargin),
+                    child: Text(
+                      user_dir,
+                      softWrap: true,
+                      style: user_dir_exists
+                          ? const TextStyle(
+                              decoration: TextDecoration.underline)
+                          : null,
+                    )).marginOnly(left: 10),
+              ),
+              ElevatedButton(
+                      onPressed: isOptionFixed(kOptionVideoSaveDirectory)
+                          ? null
+                          : () async {
+                              String? initialDirectory;
+                              if (await Directory.fromUri(
+                                      Uri.directory(user_dir))
+                                  .exists()) {
+                                initialDirectory = user_dir;
+                              }
+                              String? selectedDirectory =
+                                  await FilePicker.platform.getDirectoryPath(
+                                      initialDirectory: initialDirectory);
+                              if (selectedDirectory != null) {
+                                await bind.mainSetLocalOption(
+                                    key: kOptionVideoSaveDirectory,
+                                    value: selectedDirectory);
+                                setState(() {});
+                              }
+                            },
+                      child: Text(translate('Change')))
+                  .marginOnly(left: 5),
+            ],
+          ).marginOnly(left: _kContentHMargin),
       ]);
     });
   }
@@ -641,8 +673,9 @@ class _GeneralState extends State<_General> {
         initialKey: currentKey,
         onChanged: (key) async {
           await bind.mainSetLocalOption(key: kCommConfKeyLang, value: key);
-          reloadAllWindows();
-          bind.mainChangeLanguage(lang: key);
+          if (isWeb) reloadCurrentWindow();
+          if (!isWeb) reloadAllWindows();
+          if (!isWeb) bind.mainChangeLanguage(lang: key);
         },
         enabled: !isOptFixed,
       ).marginOnly(left: _kContentHMargin);
@@ -783,8 +816,33 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
           onChangedBot(!hasBot.value);
         },
       ).marginOnly(left: _kCheckBoxLeftMargin + 30);
+
+      final trust = Row(
+        children: [
+          Flexible(
+            child: Tooltip(
+              waitDuration: Duration(milliseconds: 300),
+              message: translate("enable-trusted-devices-tip"),
+              child: _OptionCheckBox(context, "Enable trusted devices",
+                  kOptionEnableTrustedDevices,
+                  enabled: !locked, update: (v) {
+                setState(() {});
+              }),
+            ),
+          ),
+          if (mainGetBoolOptionSync(kOptionEnableTrustedDevices))
+            ElevatedButton(
+                onPressed: locked
+                    ? null
+                    : () {
+                        manageTrustedDeviceDialog();
+                      },
+                child: Text(translate('Manage trusted devices')))
+        ],
+      ).marginOnly(left: 30);
+
       return Column(
-        children: [tfa, bot],
+        children: [tfa, bot, trust],
       );
     }
 
@@ -971,7 +1029,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             translate('Accept sessions via both'),
           ];
           var modeInitialKey = model.approveMode;
-          if (!modeKeys.contains(modeInitialKey)) modeInitialKey = '';
+          if (!modeKeys.contains(modeInitialKey)) {
+            modeInitialKey = defaultOptionApproveMode;
+          }
           final usePassword = model.approveMode != 'click';
 
           final isApproveModeFixed = isOptionFixed(kOptionApproveMode);
@@ -1018,6 +1078,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
         _OptionCheckBox(context, 'allow-only-conn-window-open-tip',
             'allow-only-conn-window-open',
             reverse: false, enabled: enabled),
+      if (bind.mainIsInstalled()) unlockPin()
     ]);
   }
 
@@ -1265,6 +1326,40 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
       }(),
     ];
   }
+
+  Widget unlockPin() {
+    bool enabled = !locked;
+    RxString unlockPin = bind.mainGetUnlockPin().obs;
+    update() async {
+      unlockPin.value = bind.mainGetUnlockPin();
+    }
+
+    onChanged(bool? checked) async {
+      changeUnlockPinDialog(unlockPin.value, update);
+    }
+
+    final isOptFixed = isOptionFixed(kOptionWhitelist);
+    return GestureDetector(
+      child: Obx(() => Row(
+            children: [
+              Checkbox(
+                      value: unlockPin.isNotEmpty,
+                      onChanged: enabled && !isOptFixed ? onChanged : null)
+                  .marginOnly(right: 5),
+              Expanded(
+                  child: Text(
+                translate('Unlock with PIN'),
+                style: TextStyle(color: disabledTextColor(context, enabled)),
+              ))
+            ],
+          )),
+      onTap: enabled
+          ? () {
+              onChanged(!unlockPin.isNotEmpty);
+            }
+          : null,
+    ).marginOnly(left: _kCheckBoxLeftMargin);
+  }
 }
 
 class _Network extends StatefulWidget {
@@ -1277,7 +1372,7 @@ class _Network extends StatefulWidget {
 class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
-  bool locked = bind.mainIsInstalled();
+  bool locked = !isWeb && bind.mainIsInstalled();
 
   @override
   Widget build(BuildContext context) {
@@ -1286,8 +1381,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final scrollController = ScrollController();
     final hideServer =
         bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';
+    // TODO: support web proxy
     final hideProxy =
-        bind.mainGetBuildinOption(key: kOptionHideProxySetting) == 'Y';
+        isWeb || bind.mainGetBuildinOption(key: kOptionHideProxySetting) == 'Y';
     return DesktopScrollWrapper(
         scrollController: scrollController,
         child: ListView(
@@ -1367,8 +1463,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
               children: [
                 Obx(() => _LabeledTextField(context, 'ID Server', idController,
                     idErrMsg.value, enabled, secure)),
-                Obx(() => _LabeledTextField(context, 'Relay Server',
-                    relayController, relayErrMsg.value, enabled, secure)),
+                if (!isWeb)
+                  Obx(() => _LabeledTextField(context, 'Relay Server',
+                      relayController, relayErrMsg.value, enabled, secure)),
                 Obx(() => _LabeledTextField(context, 'API Server',
                     apiController, apiErrMsg.value, enabled, secure)),
                 _LabeledTextField(
@@ -1407,7 +1504,7 @@ class _DisplayState extends State<_Display> {
               scrollStyle(context),
               imageQuality(context),
               codec(context),
-              privacyModeImpl(context),
+              if (!isWeb) privacyModeImpl(context),
               other(context),
             ]).marginOnly(bottom: _kListViewBottomMargin));
   }
@@ -1818,9 +1915,10 @@ class _AboutState extends State<_About> {
                   SelectionArea(
                       child: Text('${translate('Build Date')}: $buildDate')
                           .marginSymmetric(vertical: 4.0)),
-                  SelectionArea(
-                      child: Text('${translate('Fingerprint')}: $fingerprint')
-                          .marginSymmetric(vertical: 4.0)),
+                  if (!isWeb)
+                    SelectionArea(
+                        child: Text('${translate('Fingerprint')}: $fingerprint')
+                            .marginSymmetric(vertical: 4.0)),
                   InkWell(
                       onTap: () {
                         launchUrlString('https://rainss.cn');
@@ -2160,9 +2258,14 @@ Widget _lock(
                             Text(translate(label)).marginOnly(left: 5),
                           ]).marginSymmetric(vertical: 2)),
                   onPressed: () async {
-                    bool checked = await callMainCheckSuperUserPermission();
-                    if (checked) {
-                      onUnlock();
+                    final unlockPin = bind.mainGetUnlockPin();
+                    if (unlockPin.isEmpty) {
+                      bool checked = await callMainCheckSuperUserPermission();
+                      if (checked) {
+                        onUnlock();
+                      }
+                    } else {
+                      checkUnlockPinDialog(unlockPin, onUnlock);
                     }
                   },
                 ).marginSymmetric(horizontal: 2, vertical: 4),
@@ -2422,6 +2525,7 @@ void changeSocks5Proxy() async {
                                     : Icons.visibility))),
                         controller: pwdController,
                         enabled: !isOptFixed,
+                        maxLength: bind.mainMaxEncryptLen(),
                       )),
                 ),
               ],
