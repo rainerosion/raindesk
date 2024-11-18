@@ -23,7 +23,7 @@ SECRET_KEY = os.getenv("SECRET_KEY") or "worldpeace2024"
 # The headers for API requests
 HEADERS = {"Authorization": f"Bearer {SECRET_KEY}"}
 
-SIGN_TIMEOUT = int(os.getenv("SIGN_TIMEOUT") or "30")
+SIGN_TIMEOUT = int(os.getenv("SIGN_TIMEOUT") or "10")
 TIMEOUT = float(os.getenv("TIMEOUT") or "900")
 
 
